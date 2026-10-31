@@ -24,6 +24,8 @@ export function useGeolocation(options?: PositionOptions) {
   });
 
   const watchIdRef = useRef<number | null>(null);
+  const callbackRef = useRef<((coord: LocationCoordinate) => void) | undefined>(undefined);
+  const fallbackAttemptedRef = useRef(false);
 
   // Check query permission if supported by the browser
   useEffect(() => {
@@ -63,11 +65,40 @@ export function useGeolocation(options?: PositionOptions) {
     }));
   }, []);
 
+  const handlePositionSuccess = useCallback((position: GeolocationPosition) => {
+    const coord: LocationCoordinate = {
+      latitude: position.coords.latitude,
+      longitude: position.coords.longitude,
+      accuracy: position.coords.accuracy,
+      altitude: position.coords.altitude,
+      speed: position.coords.speed,
+      heading: position.coords.heading,
+      capturedAt: Date.now(),
+    };
+
+    setState((prev) => ({
+      ...prev,
+      location: coord,
+      isWatching: true,
+      permissionState: 'granted',
+      error: null,
+      errorCode: null,
+      lastUpdated: Date.now(),
+    }));
+
+    if (callbackRef.current) {
+      callbackRef.current(coord);
+    }
+  }, []);
+
   /**
    * Start watching position ONLY after explicit user consent
    */
   const startWatching = useCallback(
     (onLocationUpdate?: (coord: LocationCoordinate) => void) => {
+      callbackRef.current = onLocationUpdate;
+      fallbackAttemptedRef.current = false;
+
       if (typeof navigator === 'undefined' || !navigator.geolocation) {
         setState((prev) => ({
           ...prev,
@@ -91,33 +122,41 @@ export function useGeolocation(options?: PositionOptions) {
         errorCode: null,
       }));
 
-      const positionSuccess = (position: GeolocationPosition) => {
-        const coord: LocationCoordinate = {
-          latitude: position.coords.latitude,
-          longitude: position.coords.longitude,
-          accuracy: position.coords.accuracy,
-          altitude: position.coords.altitude,
-          speed: position.coords.speed,
-          heading: position.coords.heading,
-          capturedAt: position.timestamp || Date.now(),
-        };
-
-        setState((prev) => ({
-          ...prev,
-          location: coord,
-          isWatching: true,
-          permissionState: 'granted',
-          error: null,
-          errorCode: null,
-          lastUpdated: Date.now(),
-        }));
-
-        if (onLocationUpdate) {
-          onLocationUpdate(coord);
-        }
-      };
-
       const positionError = (err: GeolocationPositionError) => {
+        // If high accuracy times out or is unavailable, automatically fallback to standard accuracy
+        if ((err.code === 2 || err.code === 3) && !fallbackAttemptedRef.current) {
+          fallbackAttemptedRef.current = true;
+          console.warn('High-accuracy GPS fix unavailable, falling back to network triangulation...');
+          try {
+            navigator.geolocation.getCurrentPosition(
+              handlePositionSuccess,
+              () => {
+                // Secondary fallback
+              },
+              { enableHighAccuracy: false, timeout: 10000, maximumAge: 30000 }
+            );
+
+            // Also switch watcher to standard accuracy
+            if (watchIdRef.current !== null) {
+              navigator.geolocation.clearWatch(watchIdRef.current);
+            }
+            watchIdRef.current = navigator.geolocation.watchPosition(
+              handlePositionSuccess,
+              (finalErr) => {
+                setState((prev) => ({
+                  ...prev,
+                  error: 'Location unavailable. Please verify GPS or network signal.',
+                  errorCode: finalErr.code,
+                }));
+              },
+              { enableHighAccuracy: false, timeout: 20000, maximumAge: 10000 }
+            );
+            return;
+          } catch {
+            // ignore
+          }
+        }
+
         let errorMessage = 'An unknown error occurred while accessing location.';
         switch (err.code) {
           case 1: // PERMISSION_DENIED
@@ -141,18 +180,39 @@ export function useGeolocation(options?: PositionOptions) {
         }));
       };
 
-      const defaultOptions: PositionOptions = {
+      const highAccuracyOptions: PositionOptions = {
         enableHighAccuracy: true,
-        timeout: 15000,
-        maximumAge: 3000,
+        timeout: 10000,
+        maximumAge: 2000,
         ...options,
       };
 
+      // 1. Immediately request fast one-shot position fix so UI responds instantly
+      try {
+        navigator.geolocation.getCurrentPosition(
+          handlePositionSuccess,
+          (err) => {
+            // If high accuracy fast fix fails, try low accuracy immediately
+            if (err.code === 2 || err.code === 3) {
+              navigator.geolocation.getCurrentPosition(
+                handlePositionSuccess,
+                () => {},
+                { enableHighAccuracy: false, timeout: 5000, maximumAge: 60000 }
+              );
+            }
+          },
+          highAccuracyOptions
+        );
+      } catch {
+        // ignore
+      }
+
+      // 2. Start continuous high-accuracy watching
       try {
         const id = navigator.geolocation.watchPosition(
-          positionSuccess,
+          handlePositionSuccess,
           positionError,
-          defaultOptions
+          highAccuracyOptions
         );
         watchIdRef.current = id;
       } catch (err: any) {
@@ -163,7 +223,7 @@ export function useGeolocation(options?: PositionOptions) {
         }));
       }
     },
-    [options]
+    [handlePositionSuccess, options]
   );
 
   // CRITICAL CLEANUP: always clear watcher on unmount

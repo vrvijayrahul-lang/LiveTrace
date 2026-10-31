@@ -4,6 +4,7 @@ import {
   TileLayer,
   Marker,
   Circle,
+  Polyline,
   useMap,
 } from 'react-leaflet';
 import L from 'leaflet';
@@ -14,6 +15,7 @@ import {
   Layers,
   MapPin,
   ShieldCheck,
+  Navigation,
 } from 'lucide-react';
 import { formatCoordinates, formatRelativeTime, isLocationStale } from '@/lib/utils';
 import type { LocationCoordinate } from '@/types/location';
@@ -24,19 +26,19 @@ const createRadarIcon = (isStale: boolean) => {
   return L.divIcon({
     className: 'custom-radar-wrapper',
     html: `
-      <div style="position: relative; width: 40px; height: 40px; display: flex; align-items: center; justify-content: center;">
+      <div style="position: relative; width: 44px; height: 44px; display: flex; align-items: center; justify-content: center;">
         <div style="
           position: absolute;
-          width: 36px;
-          height: 36px;
+          width: 42px;
+          height: 42px;
           border-radius: 50%;
           background: ${isStale ? 'rgba(245, 158, 11, 0.25)' : 'rgba(99, 102, 241, 0.35)'};
           animation: radarPing 2s cubic-bezier(0, 0, 0.2, 1) infinite;
         "></div>
         <div style="
           position: absolute;
-          width: 20px;
-          height: 20px;
+          width: 22px;
+          height: 22px;
           border-radius: 50%;
           background: ${isStale ? 'rgba(245, 158, 11, 0.6)' : 'rgba(99, 102, 241, 0.6)'};
           animation: pulseSubtle 1.8s ease-in-out infinite;
@@ -49,40 +51,58 @@ const createRadarIcon = (isStale: boolean) => {
           border-radius: 50%;
           background: #FFFFFF;
           border: 3px solid ${isStale ? '#F59E0B' : '#6366F1'};
-          box-shadow: 0 0 14px ${isStale ? '#F59E0B' : '#818CF8'};
+          box-shadow: 0 0 16px ${isStale ? '#F59E0B' : '#818CF8'};
         "></div>
       </div>
     `,
-    iconSize: [40, 40],
-    iconAnchor: [20, 20],
+    iconSize: [44, 44],
+    iconAnchor: [22, 22],
   });
 };
 
-// Component to handle map center and smooth panning
+// Component to handle map center, initial auto-zoom, and smooth panning
 const MapController: React.FC<{
   center: [number, number];
-  _zoom?: number;
   follow: boolean;
-}> = ({ center, follow }) => {
+  hasLocation: boolean;
+}> = ({ center, follow, hasLocation }) => {
   const map = useMap();
+  const hasZoomedInitial = useRef(false);
   const prevCenterRef = useRef<[number, number]>(center);
 
+  // Invalidate size on mount to ensure tiles render completely
   useEffect(() => {
-    if (follow) {
+    const timer = setTimeout(() => {
+      map.invalidateSize();
+    }, 200);
+    return () => clearTimeout(timer);
+  }, [map]);
+
+  useEffect(() => {
+    if (hasLocation && !hasZoomedInitial.current) {
+      map.setView(center, 16, { animate: true });
+      hasZoomedInitial.current = true;
+      prevCenterRef.current = center;
+      return;
+    }
+
+    if (follow && hasLocation) {
       const [lat, lng] = center;
       const [prevLat, prevLng] = prevCenterRef.current;
-      if (lat !== prevLat || lng !== prevLng) {
-        map.panTo(center, { animate: true, duration: 1 });
+      if (Math.abs(lat - prevLat) > 0.00002 || Math.abs(lng - prevLng) > 0.00002) {
+        map.panTo(center, { animate: true, duration: 0.8 });
         prevCenterRef.current = center;
       }
     }
-  }, [center, follow, map]);
+  }, [center, follow, hasLocation, map]);
 
   return null;
 };
 
 export interface LiveTrackingMapProps {
   location: LocationCoordinate | null;
+  locationHistory?: [number, number][];
+  resolvedAddress?: string | null;
   sessionStatus: SessionStatus;
   sessionTitle?: string;
   isSharingActive: boolean;
@@ -90,10 +110,11 @@ export interface LiveTrackingMapProps {
 
 export const LiveTrackingMap: React.FC<LiveTrackingMapProps> = ({
   location,
+  locationHistory = [],
+  resolvedAddress,
   sessionStatus,
-  _sessionTitle,
   isSharingActive,
-}: any) => {
+}) => {
   const [followLocation, setFollowLocation] = useState(true);
   const [tileError, setTileError] = useState(false);
   const [tileMode, setTileMode] = useState<'dark' | 'standard'>('dark');
@@ -119,10 +140,10 @@ export const LiveTrackingMap: React.FC<LiveTrackingMapProps> = ({
       {/* Top Map Status Floating Island */}
       <div className="absolute top-4 inset-x-4 z-[400] flex flex-wrap items-center justify-between gap-3 pointer-events-none">
         {/* Telemetry pill */}
-        <div className="pointer-events-auto flex items-center gap-2 px-4 py-2 rounded-full bg-dark-900/90 backdrop-blur-xl border border-white/10 shadow-bezel-inner text-xs">
-          <div className="flex items-center gap-2">
+        <div className="pointer-events-auto flex items-center gap-2 px-4 py-2 rounded-full bg-dark-900/95 backdrop-blur-xl border border-white/10 shadow-bezel-inner text-xs max-w-full overflow-hidden">
+          <div className="flex items-center gap-2 shrink-0">
             <span
-              className={`w-2 h-2 rounded-full ${
+              className={`w-2.5 h-2.5 rounded-full ${
                 !isSharingActive
                   ? 'bg-slate-400'
                   : stale
@@ -134,19 +155,26 @@ export const LiveTrackingMap: React.FC<LiveTrackingMapProps> = ({
               {!isSharingActive
                 ? 'Waiting for Recipient'
                 : stale
-                ? 'Signal Stale'
+                ? 'Signal Delayed'
                 : 'Live Signal Connected'}
             </span>
           </div>
 
           {location && (
             <>
-              <span className="text-white/20">|</span>
-              <span className="font-mono text-slate-300">
-                {formatCoordinates(location.latitude, location.longitude)}
-              </span>
-              <span className="text-white/20">|</span>
-              <span className="text-slate-400">±{Math.round(location.accuracy)}m</span>
+              <span className="text-white/20 shrink-0">|</span>
+              {resolvedAddress ? (
+                <div className="flex items-center gap-1.5 text-brand-300 font-medium truncate max-w-[200px] sm:max-w-[280px]">
+                  <MapPin className="w-3.5 h-3.5 text-brand-400 shrink-0" />
+                  <span className="truncate">{resolvedAddress}</span>
+                </div>
+              ) : (
+                <span className="font-mono text-slate-300 shrink-0">
+                  {formatCoordinates(location.latitude, location.longitude)}
+                </span>
+              )}
+              <span className="text-white/20 shrink-0">|</span>
+              <span className="text-slate-400 shrink-0">±{Math.round(location.accuracy)}m</span>
             </>
           )}
         </div>
@@ -184,12 +212,12 @@ export const LiveTrackingMap: React.FC<LiveTrackingMapProps> = ({
       {/* Stale Location Alert Banner */}
       {location && stale && isSharingActive && (
         <div className="absolute top-16 left-4 right-4 z-[400] max-w-md mx-auto pointer-events-auto">
-          <div className="flex items-center gap-3 p-3 rounded-2xl bg-amber-950/80 backdrop-blur-lg border border-amber-500/30 shadow-bezel-outer text-xs text-amber-200">
+          <div className="flex items-center gap-3 p-3 rounded-2xl bg-amber-950/85 backdrop-blur-lg border border-amber-500/30 shadow-bezel-outer text-xs text-amber-200">
             <AlertTriangle className="w-4 h-4 text-amber-400 shrink-0" />
             <div className="flex-1 min-w-0">
               <span className="font-semibold block">Location Signal Delay</span>
               <span className="text-amber-300/80">
-                Last update was {formatRelativeTime(location.capturedAt)}. Device may be backgrounded or out of coverage.
+                Last update was {formatRelativeTime(location.capturedAt)}. Phone may be in battery saver or indoors.
               </span>
             </div>
           </div>
@@ -198,7 +226,7 @@ export const LiveTrackingMap: React.FC<LiveTrackingMapProps> = ({
 
       {/* Empty State Overlay when waiting for recipient consent */}
       {!location && (
-        <div className="absolute inset-0 z-[400] flex flex-col items-center justify-center p-6 bg-dark-950/70 backdrop-blur-sm pointer-events-auto text-center">
+        <div className="absolute inset-0 z-[400] flex flex-col items-center justify-center p-6 bg-dark-950/75 backdrop-blur-sm pointer-events-auto text-center">
           <div className="relative p-2 rounded-full bg-brand-500/10 border border-brand-500/20 mb-4">
             <div className="w-12 h-12 rounded-full bg-dark-800 flex items-center justify-center text-brand-400">
               <MapPin className="w-6 h-6 animate-bounce" />
@@ -216,12 +244,12 @@ export const LiveTrackingMap: React.FC<LiveTrackingMapProps> = ({
           </h4>
           <p className="text-xs text-slate-400 max-w-sm leading-relaxed mb-4">
             {sessionStatus === 'pending'
-              ? 'Share the tracking link with your recipient. Once they review the privacy terms and grant location permission, their live position will appear here.'
+              ? 'Share the tracking link with your recipient. Once they open the link and tap "Share My Live Location", their live coordinates will appear here.'
               : 'Live coordinates are only collected and rendered while the recipient maintains active browser consent.'}
           </p>
           <div className="flex items-center gap-2 text-xs text-brand-300 bg-brand-500/10 border border-brand-500/20 px-3.5 py-1.5 rounded-full">
             <ShieldCheck className="w-4 h-4 text-brand-400" />
-            <span>Consent-based GPS architecture</span>
+            <span>Consent-based live GPS streaming</span>
           </div>
         </div>
       )}
@@ -229,7 +257,7 @@ export const LiveTrackingMap: React.FC<LiveTrackingMapProps> = ({
       {/* Leaflet Map Canvas */}
       <MapContainer
         center={currentPos}
-        zoom={location ? 15 : 12}
+        zoom={location ? 16 : 12}
         scrollWheelZoom={true}
         className={`w-full h-full ${tileMode === 'dark' ? 'dark-map-tiles' : ''}`}
       >
@@ -241,14 +269,27 @@ export const LiveTrackingMap: React.FC<LiveTrackingMapProps> = ({
           }}
         />
 
-        <MapController center={currentPos} follow={followLocation} />
+        <MapController center={currentPos} follow={followLocation} hasLocation={Boolean(location)} />
+
+        {/* Breadcrumb path history */}
+        {locationHistory.length > 1 && (
+          <Polyline
+            positions={locationHistory}
+            pathOptions={{
+              color: '#818CF8',
+              weight: 3.5,
+              opacity: 0.75,
+              dashArray: '6, 8',
+            }}
+          />
+        )}
 
         {location && (
           <>
             {/* Accuracy ring */}
             <Circle
               center={currentPos}
-              radius={Math.max(location.accuracy, 20)}
+              radius={Math.max(location.accuracy, 18)}
               pathOptions={{
                 color: stale ? '#F59E0B' : '#6366F1',
                 weight: 1.5,
@@ -272,9 +313,15 @@ export const LiveTrackingMap: React.FC<LiveTrackingMapProps> = ({
             <span>Updated {formatRelativeTime(location.capturedAt)}</span>
           </div>
 
-          <div className="pointer-events-auto text-[11px] text-slate-500 bg-dark-950/80 px-2.5 py-1 rounded-full border border-white/5 backdrop-blur-sm">
-            OpenStreetMap
-          </div>
+          <a
+            href={`https://www.google.com/maps/search/?api=1&query=${location.latitude},${location.longitude}`}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="pointer-events-auto flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-brand-600/30 hover:bg-brand-600/50 border border-brand-500/40 text-xs text-brand-200 transition-colors backdrop-blur-md shadow-bezel-inner"
+          >
+            <Navigation className="w-3.5 h-3.5 text-brand-300" />
+            <span>Google Maps</span>
+          </a>
         </div>
       )}
 

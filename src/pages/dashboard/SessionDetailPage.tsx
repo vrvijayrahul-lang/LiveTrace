@@ -19,6 +19,7 @@ import { Card } from '@/components/ui/Card';
 import { Badge } from '@/components/ui/Badge';
 import { LiveTrackingMap } from '@/components/map/LiveTrackingMap';
 import { formatDateTime, formatTimeRemaining, formatCoordinates, formatRelativeTime } from '@/lib/utils';
+import { reverseGeocode } from '@/lib/geocoding';
 import type { TrackingSession } from '@/types/session';
 import type { LocationCoordinate } from '@/types/location';
 
@@ -30,6 +31,8 @@ export const SessionDetailPage: React.FC = () => {
 
   const [session, setSession] = useState<TrackingSession | null>(null);
   const [location, setLocation] = useState<LocationCoordinate | null>(null);
+  const [locationHistory, setLocationHistory] = useState<[number, number][]>([]);
+  const [resolvedAddress, setResolvedAddress] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [copied, setCopied] = useState(false);
   const [revoking, setRevoking] = useState(false);
@@ -46,6 +49,23 @@ export const SessionDetailPage: React.FC = () => {
 
     const unsubscribeLocation = locationService.subscribeToLocation(id, (coord) => {
       setLocation(coord);
+      if (coord) {
+        setLocationHistory((prev) => {
+          const last = prev[prev.length - 1];
+          if (
+            last &&
+            Math.abs(last[0] - coord.latitude) < 0.00001 &&
+            Math.abs(last[1] - coord.longitude) < 0.00001
+          ) {
+            return prev;
+          }
+          return [...prev.slice(-49), [coord.latitude, coord.longitude]];
+        });
+
+        reverseGeocode(coord.latitude, coord.longitude)
+          .then((addr) => setResolvedAddress(addr))
+          .catch(() => {});
+      }
     });
 
     return () => {
@@ -194,6 +214,8 @@ export const SessionDetailPage: React.FC = () => {
       <div className="space-y-4">
         <LiveTrackingMap
           location={location}
+          locationHistory={locationHistory}
+          resolvedAddress={resolvedAddress}
           sessionStatus={session.status}
           sessionTitle={session.title}
           isSharingActive={isSharingActive}
@@ -258,11 +280,34 @@ export const SessionDetailPage: React.FC = () => {
 
         {/* Live GPS Telemetry Card */}
         <Card className="space-y-3">
-          <h3 className="text-xs font-semibold uppercase tracking-wider text-slate-400">
-            Live Coordinates & Accuracy
-          </h3>
+          <div className="flex items-center justify-between">
+            <h3 className="text-xs font-semibold uppercase tracking-wider text-slate-400">
+              Live Coordinates & Telemetry
+            </h3>
+            {location && (
+              <a
+                href={`https://www.google.com/maps/search/?api=1&query=${location.latitude},${location.longitude}`}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="text-[11px] text-brand-400 hover:text-brand-300 font-medium flex items-center gap-1"
+              >
+                <span>Maps</span>
+                <ExternalLink className="w-3 h-3" />
+              </a>
+            )}
+          </div>
           {location ? (
             <div className="space-y-2 text-xs">
+              {resolvedAddress && (
+                <div className="p-2.5 rounded-xl bg-brand-500/10 border border-brand-500/20 text-brand-200">
+                  <span className="text-[10px] uppercase font-bold tracking-wider text-brand-400 block mb-0.5">
+                    Estimated Street Location
+                  </span>
+                  <span className="font-medium text-slate-200 leading-snug block">
+                    {resolvedAddress}
+                  </span>
+                </div>
+              )}
               <div className="flex justify-between py-1 border-b border-white/5">
                 <span className="text-slate-400">Coordinates</span>
                 <span className="font-mono text-slate-100">

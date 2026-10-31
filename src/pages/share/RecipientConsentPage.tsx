@@ -51,7 +51,60 @@ export const RecipientConsentPage: React.FC = () => {
     maximumAge: 3000,
   });
 
-  const lastSentCoordRef = useRef<{ lat: number; lng: number; time: number } | null>(null);
+  const lastSentCoordRef = useRef<{ lat: number; lng: number; accuracy: number; time: number } | null>(null);
+
+  // Periodic heartbeat every 6 seconds while sharing is active to keep feed fresh
+  useEffect(() => {
+    if (!consentGranted || isStopped || !session || !token) return;
+
+    const interval = setInterval(() => {
+      const last = lastSentCoordRef.current;
+      if (last && Date.now() - last.time >= 6000) {
+        const now = Date.now();
+        locationService
+          .sendLocationUpdate(token, session.id, {
+            latitude: last.lat,
+            longitude: last.lng,
+            accuracy: last.accuracy,
+            capturedAt: now,
+          })
+          .then(() => {
+            last.time = now;
+            setLastSentTime(now);
+          })
+          .catch(() => {});
+      }
+    }, 6000);
+
+    return () => clearInterval(interval);
+  }, [consentGranted, isStopped, session, token]);
+
+  // Keep alive when mobile phone wakes from background
+  useEffect(() => {
+    const handleVisibility = () => {
+      if (document.visibilityState === 'visible' && consentGranted && !isStopped && session && token) {
+        const last = lastSentCoordRef.current;
+        if (last) {
+          const now = Date.now();
+          locationService
+            .sendLocationUpdate(token, session.id, {
+              latitude: last.lat,
+              longitude: last.lng,
+              accuracy: last.accuracy,
+              capturedAt: now,
+            })
+            .then(() => {
+              last.time = now;
+              setLastSentTime(now);
+            })
+            .catch(() => {});
+        }
+      }
+    };
+
+    document.addEventListener('visibilitychange', handleVisibility);
+    return () => document.removeEventListener('visibilitychange', handleVisibility);
+  }, [consentGranted, isStopped, session, token]);
 
   // Initial Load: Validate token and fetch public non-sensitive session details
   useEffect(() => {
@@ -122,7 +175,7 @@ export const RecipientConsentPage: React.FC = () => {
           const timeDiff = now - lastSentCoordRef.current.time;
           const latDiff = Math.abs(coord.latitude - lastSentCoordRef.current.lat);
           const lngDiff = Math.abs(coord.longitude - lastSentCoordRef.current.lng);
-          if (timeDiff < 3000 && latDiff < 0.00002 && lngDiff < 0.00002) {
+          if (timeDiff < 2000 && latDiff < 0.00001 && lngDiff < 0.00001) {
             return;
           }
         }
@@ -130,7 +183,12 @@ export const RecipientConsentPage: React.FC = () => {
         setSendingUpdate(true);
         try {
           await locationService.sendLocationUpdate(token, session.id, coord);
-          lastSentCoordRef.current = { lat: coord.latitude, lng: coord.longitude, time: now };
+          lastSentCoordRef.current = {
+            lat: coord.latitude,
+            lng: coord.longitude,
+            accuracy: coord.accuracy,
+            time: now,
+          };
           setLastSentTime(now);
         } catch (err) {
           console.error('Failed to send live coordinate:', err);
