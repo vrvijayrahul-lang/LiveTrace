@@ -55,7 +55,9 @@ export const SessionDetailPage: React.FC = () => {
   }, [id]);
 
   const origin = typeof window !== 'undefined' ? window.location.origin : 'https://locateflow.app';
-  const shareUrl = `${origin}/share/${session?.tokenHash || id}`;
+  const savedRawToken = typeof window !== 'undefined' && id ? localStorage.getItem(`rawToken_${id}`) : null;
+  const shareToken = savedRawToken || session?.tokenHash || id;
+  const shareUrl = `${origin}/share/${shareToken}`;
 
   const handleCopyLink = () => {
     navigator.clipboard.writeText(shareUrl);

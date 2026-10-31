@@ -86,7 +86,9 @@ export const SessionsListPage: React.FC = () => {
 
   const handleCopy = (session: TrackingSession) => {
     const origin = typeof window !== 'undefined' ? window.location.origin : 'https://locateflow.app';
-    const url = `${origin}/share/${session.tokenHash || session.id}`;
+    const savedRawToken = typeof window !== 'undefined' ? localStorage.getItem(`rawToken_${session.id}`) : null;
+    const shareToken = savedRawToken || session.tokenHash || session.id;
+    const url = `${origin}/share/${shareToken}`;
     navigator.clipboard.writeText(url);
     setCopiedId(session.id);
     success('Link Copied', 'Share URL is copied to clipboard.');

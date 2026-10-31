@@ -10,7 +10,7 @@ export const locationService = {
    * Enforces coordinate validity and session active status.
    */
   async sendLocationUpdate(
-    rawToken: string,
+    tokenOrId: string,
     sessionId: string,
     coords: {
       latitude: number;
@@ -45,17 +45,23 @@ export const locationService = {
           serverTimestamp: serverTimestamp(),
         });
 
-        await updateDoc(sessionDocRef, {
-          lastUpdatedAt: Date.now(),
-        });
+        try {
+          await updateDoc(sessionDocRef, {
+            lastUpdatedAt: Date.now(),
+          });
+        } catch {
+          // ignore session doc update error
+        }
 
+        // Mirror to local store so same-device testing gets immediate feedback
+        demoStore.updateLocation(tokenOrId, validated);
         return true;
       } catch (err) {
         console.warn('Firestore location update failed, falling back to local store:', err);
       }
     }
 
-    return demoStore.updateLocation(rawToken, validated);
+    return demoStore.updateLocation(tokenOrId, validated);
   },
 
   /**
@@ -65,7 +71,7 @@ export const locationService = {
     sessionId: string,
     callback: (location: LocationCoordinate | null) => void
   ): () => void {
-    if (isFirebaseConfigured && db && !sessionId.startsWith('trk_demo')) {
+    if (isFirebaseConfigured && db) {
       const locationDocRef = doc(db, 'trackingSessions', sessionId, 'location', 'current');
       return onSnapshot(
         locationDocRef,

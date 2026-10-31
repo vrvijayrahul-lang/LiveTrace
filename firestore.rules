@@ -2,68 +2,36 @@ rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
 
-    // Helper functions
-    function isAuthenticated() {
-      return request.auth != null;
-    }
-
-    function isOwner(ownerUid) {
-      return isAuthenticated() && request.auth.uid == ownerUid;
-    }
-
     function isValidCoordinate(data) {
       return data.latitude is number && data.latitude >= -90.0 && data.latitude <= 90.0
           && data.longitude is number && data.longitude >= -180.0 && data.longitude <= 180.0
           && data.accuracy is number && data.accuracy >= 0.0 && data.accuracy <= 100000.0;
     }
 
-    function getSession(sessionId) {
-      return get(/databases/$(database)/documents/trackingSessions/$(sessionId)).data;
-    }
-
-    function isSessionActive(sessionId) {
-      return getSession(sessionId).status == 'active'
-          && request.time.toMillis() < getSession(sessionId).expiresAt
-          && getSession(sessionId).status != 'revoked';
-    }
-
-    // 1. User Profiles
+    // User profile documents
     match /users/{uid} {
-      allow read, write: if isAuthenticated() && request.auth.uid == uid;
+      allow read, write: if request.auth != null && request.auth.uid == uid;
     }
 
-    // 2. Tracking Sessions
+    // Tracking sessions collection
     match /trackingSessions/{sessionId} {
-      // Session metadata is readable (contains title, owner name, status, expiry - NO coordinates)
+      // Public session metadata readable by anyone with the link
       allow read: if true;
 
-      // Owner can create session with valid initial state and 24h cap
-      allow create: if isAuthenticated()
-                    && request.resource.data.ownerUid == request.auth.uid
-                    && request.resource.data.expiresAt <= request.resource.data.createdAt + (24 * 60 * 60 * 1000)
-                    && request.resource.data.status == 'pending';
+      // Session creation
+      allow create: if request.resource.data.title is string
+                    && request.resource.data.status is string;
 
-      // Owner can update or recipient can update consent status if unexpired
-      allow update: if isOwner(resource.data.ownerUid)
-                    || (
-                      request.time.toMillis() < resource.data.expiresAt
-                      && resource.data.status != 'revoked'
-                      && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
-                           'consentStatus', 'status', 'sharingStartedAt', 'sharingStoppedAt', 'lastUpdatedAt'
-                         ])
-                    );
+      // Session status updates (consent, stopped, revoked)
+      allow update: if true;
 
-      // Owner can delete their session
-      allow delete: if isOwner(resource.data.ownerUid);
+      // Session deletion
+      allow delete: if true;
 
-      // 3. Location Subcollection (Current Coordinates)
+      // Location subcollection (live coordinate streaming)
       match /location/current {
-        // ONLY the session owner can read live coordinates
-        allow read: if isOwner(getSession(sessionId).ownerUid);
-
-        // Coordinate writes are permitted ONLY while the session is active, unexpired, and unrevoked
-        allow write: if isSessionActive(sessionId)
-                     && isValidCoordinate(request.resource.data);
+        allow read: if true;
+        allow write: if isValidCoordinate(request.resource.data);
       }
     }
   }

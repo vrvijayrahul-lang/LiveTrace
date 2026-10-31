@@ -45,7 +45,6 @@ class DemoStore {
     if (typeof window === 'undefined') return;
     const existing = sessionStorage.getItem(STORAGE_KEY_SESSIONS);
     if (!existing) {
-      // Seed a sample completed session and a sample active session for rich UX preview
       const now = Date.now();
       const sampleSessions: TrackingSession[] = [
         {
@@ -112,7 +111,6 @@ class DemoStore {
     const sessions: TrackingSession[] = raw ? JSON.parse(raw) : [];
     const now = Date.now();
 
-    // Check automatic 24-hour expiration
     return sessions
       .filter((s) => s.ownerUid === ownerUid)
       .map((s) => {
@@ -151,11 +149,29 @@ class DemoStore {
     this.emit('sessions:changed', sessions);
   }
 
-  public async getSessionByToken(rawToken: string): Promise<PublicSessionInfo | null> {
-    const tokenHash = await hashToken(rawToken);
+  public async findSessionByTokenOrId(tokenOrId: string): Promise<TrackingSession | null> {
+    if (typeof window === 'undefined') return null;
     const raw = sessionStorage.getItem(STORAGE_KEY_SESSIONS);
     const sessions: TrackingSession[] = raw ? JSON.parse(raw) : [];
-    const session = sessions.find((s) => s.tokenHash === tokenHash);
+
+    // Direct match by ID or tokenHash
+    let found = sessions.find((s) => s.id === tokenOrId || s.tokenHash === tokenOrId);
+    if (found) return found;
+
+    // Match by computed hash
+    try {
+      const hash = await hashToken(tokenOrId);
+      found = sessions.find((s) => s.tokenHash === hash);
+      if (found) return found;
+    } catch {
+      // ignore
+    }
+
+    return null;
+  }
+
+  public async getSessionByToken(tokenOrId: string): Promise<PublicSessionInfo | null> {
+    const session = await this.findSessionByTokenOrId(tokenOrId);
     if (!session) return null;
 
     const isExpired = Date.now() > session.expiresAt;
@@ -173,11 +189,8 @@ class DemoStore {
     };
   }
 
-  public async recordConsent(rawToken: string, consent: 'granted' | 'declined'): Promise<boolean> {
-    const tokenHash = await hashToken(rawToken);
-    const raw = sessionStorage.getItem(STORAGE_KEY_SESSIONS);
-    const sessions: TrackingSession[] = raw ? JSON.parse(raw) : [];
-    const session = sessions.find((s) => s.tokenHash === tokenHash);
+  public async recordConsent(tokenOrId: string, consent: 'granted' | 'declined'): Promise<boolean> {
+    const session = await this.findSessionByTokenOrId(tokenOrId);
     if (!session) return false;
 
     session.consentStatus = consent;
@@ -192,11 +205,8 @@ class DemoStore {
     return true;
   }
 
-  public async stopSharingByRecipient(rawToken: string): Promise<boolean> {
-    const tokenHash = await hashToken(rawToken);
-    const raw = sessionStorage.getItem(STORAGE_KEY_SESSIONS);
-    const sessions: TrackingSession[] = raw ? JSON.parse(raw) : [];
-    const session = sessions.find((s) => s.tokenHash === tokenHash);
+  public async stopSharingByRecipient(tokenOrId: string): Promise<boolean> {
+    const session = await this.findSessionByTokenOrId(tokenOrId);
     if (!session) return false;
 
     session.status = 'stopped';
@@ -228,13 +238,10 @@ class DemoStore {
   // --- Location Updates ---
 
   public async updateLocation(
-    rawToken: string,
+    tokenOrId: string,
     coords: { latitude: number; longitude: number; accuracy: number; capturedAt: number }
   ): Promise<boolean> {
-    const tokenHash = await hashToken(rawToken);
-    const raw = sessionStorage.getItem(STORAGE_KEY_SESSIONS);
-    const sessions: TrackingSession[] = raw ? JSON.parse(raw) : [];
-    const session = sessions.find((s) => s.tokenHash === tokenHash);
+    const session = await this.findSessionByTokenOrId(tokenOrId);
 
     if (!session) return false;
     if (session.status !== 'active' || Date.now() > session.expiresAt) {
