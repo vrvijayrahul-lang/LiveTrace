@@ -1,0 +1,116 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    color-scheme: dark;
+  }
+
+  body {
+    @apply bg-dark-950 text-slate-100 overflow-x-hidden;
+    background-color: #05070B;
+  }
+
+  /* Custom subtle scrollbar */
+  ::-webkit-scrollbar {
+    width: 6px;
+    height: 6px;
+  }
+
+  ::-webkit-scrollbar-track {
+    background: #070A11;
+  }
+
+  ::-webkit-scrollbar-thumb {
+    background: #1C2740;
+    border-radius: 9999px;
+  }
+
+  ::-webkit-scrollbar-thumb:hover {
+    background: #28385C;
+  }
+}
+
+/* Map Dark Theme Filters & Enhancements */
+.dark-map-tiles .leaflet-tile {
+  filter: brightness(0.65) invert(1) contrast(3) hue-rotate(200deg) saturate(0.3) brightness(0.7);
+}
+
+.leaflet-container {
+  font-family: inherit;
+  background: #0B0F19 !important;
+  outline: none;
+}
+
+.leaflet-bar a {
+  background-color: #101624 !important;
+  color: #E2E8F0 !important;
+  border-color: rgba(255, 255, 255, 0.1) !important;
+}
+
+.leaflet-bar a:hover {
+  background-color: #1C2740 !important;
+  color: #FFFFFF !important;
+}
+
+.leaflet-popup-content-wrapper {
+  background: #101624 !important;
+  color: #F1F5F9 !important;
+  border: 1px solid rgba(255, 255, 255, 0.12) !important;
+  border-radius: 1rem !important;
+  box-shadow: 0 20px 40px -10px rgba(0, 0, 0, 0.8) !important;
+}
+
+.leaflet-popup-tip {
+  background: #101624 !important;
+  border: 1px solid rgba(255, 255, 255, 0.12) !important;
+}
+
+/* Pulsing radar locator icon */
+.radar-marker-pulse {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.radar-marker-pulse::before {
+  content: '';
+  position: absolute;
+  width: 48px;
+  height: 48px;
+  border-radius: 50%;
+  background: rgba(99, 102, 241, 0.35);
+  animation: radarPing 2.5s cubic-bezier(0, 0, 0.2, 1) infinite;
+}
+
+.radar-marker-pulse::after {
+  content: '';
+  position: absolute;
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  background: rgba(99, 102, 241, 0.6);
+  animation: pulseSubtle 2s ease-in-out infinite;
+}
+
+.radar-marker-core {
+  position: relative;
+  z-index: 10;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: #FFFFFF;
+  border: 2px solid #4F46E5;
+  box-shadow: 0 0 12px #6366F1;
+}
+
+/* Accuracy ring custom class */
+.accuracy-circle {
+  stroke: #6366F1;
+  stroke-width: 1.5;
+  stroke-dasharray: 4, 4;
+  fill: #6366F1;
+  fill-opacity: 0.12;
+}
