@@ -56,7 +56,12 @@ export const sessionService = {
     );
 
     if (isRealFirebaseUser) {
-      await setDoc(doc(db!, 'trackingSessions', sessionId), session);
+      try {
+        await setDoc(doc(db!, 'trackingSessions', sessionId), session);
+      } catch (err) {
+        console.warn('Firestore setDoc failed, saving to local store:', err);
+        demoStore.saveSession(session);
+      }
     } else {
       demoStore.saveSession(session);
     }
@@ -80,20 +85,24 @@ export const sessionService = {
     );
 
     if (isRealFirebaseUser) {
-      const q = query(
-        collection(db!, 'trackingSessions'),
-        where('ownerUid', '==', ownerUid),
-        orderBy('createdAt', 'desc')
-      );
-      const snapshot = await getDocs(q);
-      const now = Date.now();
-      return snapshot.docs.map((docSnap) => {
-        const data = docSnap.data() as TrackingSession;
-        if (data.status !== 'revoked' && data.status !== 'stopped' && now > data.expiresAt) {
-          data.status = 'expired';
-        }
-        return data;
-      });
+      try {
+        const q = query(
+          collection(db!, 'trackingSessions'),
+          where('ownerUid', '==', ownerUid),
+          orderBy('createdAt', 'desc')
+        );
+        const snapshot = await getDocs(q);
+        const now = Date.now();
+        return snapshot.docs.map((docSnap) => {
+          const data = docSnap.data() as TrackingSession;
+          if (data.status !== 'revoked' && data.status !== 'stopped' && now > data.expiresAt) {
+            data.status = 'expired';
+          }
+          return data;
+        });
+      } catch (err) {
+        console.warn('Firestore getUserSessions error, falling back to local store:', err);
+      }
     }
 
     return demoStore.getSessions(ownerUid);
