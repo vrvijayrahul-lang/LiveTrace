@@ -17,6 +17,16 @@ service cloud.firestore {
           && data.accuracy is number && data.accuracy >= 0.0 && data.accuracy <= 100000.0;
     }
 
+    function getSession(sessionId) {
+      return get(/databases/$(database)/documents/trackingSessions/$(sessionId)).data;
+    }
+
+    function isSessionActive(sessionId) {
+      return getSession(sessionId).status == 'active'
+          && request.time.toMillis() < getSession(sessionId).expiresAt
+          && getSession(sessionId).status != 'revoked';
+    }
+
     // 1. User Profiles
     match /users/{uid} {
       allow read, write: if isAuthenticated() && request.auth.uid == uid;
@@ -24,9 +34,9 @@ service cloud.firestore {
 
     // 2. Tracking Sessions
     match /trackingSessions/{sessionId} {
-      // Owner can read and manage their own sessions
+      // Owner can read and manage their own sessions, recipient can query by tokenHash
       allow read: if isOwner(resource.data.ownerUid)
-                  || (resource.data.tokenHash != null); // Allows token hash query by recipient
+                  || (resource.data.tokenHash != null);
 
       // Owner can create session with valid initial state and 24h cap
       allow create: if isAuthenticated()
@@ -35,11 +45,13 @@ service cloud.firestore {
                     && request.resource.data.status == 'pending';
 
       // Owner can update or recipient can update consent status if unexpired
-      allow update: if (isOwner(resource.data.ownerUid))
+      allow update: if isOwner(resource.data.ownerUid)
                     || (
                       request.time.toMillis() < resource.data.expiresAt
                       && resource.data.status != 'revoked'
-                      && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['consentStatus', 'status', 'sharingStartedAt', 'sharingStoppedAt', 'lastUpdatedAt'])
+                      && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+                           'consentStatus', 'status', 'sharingStartedAt', 'sharingStoppedAt', 'lastUpdatedAt'
+                         ])
                     );
 
       // Owner can delete their session
@@ -47,15 +59,11 @@ service cloud.firestore {
 
       // 3. Location Subcollection (Current Coordinates)
       match /location/current {
-        // ONLY the session owner can read the live coordinates!
-        // Prevents recipients or strangers from snooping coordinates.
-        allow read: if isOwner(get(/databases/$(database)/documents/trackingSessions/$(sessionId)).data.ownerUid);
+        // ONLY the session owner can read live coordinates
+        allow read: if isOwner(getSession(sessionId).ownerUid);
 
         // Coordinate writes are permitted ONLY while the session is active, unexpired, and unrevoked
-        allow write: if let session = get(/databases/$(database)/documents/trackingSessions/$(sessionId)).data;
-                     session.status == 'active'
-                     && request.time.toMillis() < session.expiresAt
-                     && session.status != 'revoked'
+        allow write: if isSessionActive(sessionId)
                      && isValidCoordinate(request.resource.data);
       }
     }
