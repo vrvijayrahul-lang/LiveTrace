@@ -86,3 +86,32 @@ export function isLocationStale(capturedAt?: number | null): boolean {
   if (!capturedAt) return true;
   return Date.now() - capturedAt > 45000;
 }
+
+/**
+ * Converts raw Firebase Auth error codes into friendly human readable explanations
+ */
+export function formatAuthError(error: any): string {
+  const code = error?.code || (typeof error?.message === 'string' ? error.message : '');
+  if (code.includes('auth/email-already-in-use')) {
+    return 'An account with this email already exists. Please sign in instead.';
+  }
+  if (
+    code.includes('auth/invalid-credential') ||
+    code.includes('auth/wrong-password') ||
+    code.includes('auth/user-not-found')
+  ) {
+    return 'Invalid email or password. Please verify your credentials and try again.';
+  }
+  if (code.includes('auth/weak-password')) {
+    return 'Password is too weak. Please use at least 8 characters.';
+  }
+  if (code.includes('auth/too-many-requests')) {
+    return 'Too many failed attempts. Please try again later or reset your password.';
+  }
+  if (code.includes('auth/network-request-failed')) {
+    return 'Network connection error. Please check your internet connection.';
+  }
+  return error?.message
+    ? String(error.message).replace(/^Firebase:\s*(Error\s*)?(\([^)]+\)\.?)?/i, '').trim() || 'Authentication error'
+    : 'An error occurred during authentication.';
+}

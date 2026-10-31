@@ -6,6 +6,7 @@ import { Radio, Mail, Lock, ArrowRight, Sparkles } from 'lucide-react';
 import { useAuth } from '@/hooks/useAuth';
 import { useToast } from '@/hooks/useToast';
 import { loginSchema, type LoginFormData } from '@/lib/validation';
+import { formatAuthError } from '@/lib/utils';
 import { Button } from '@/components/ui/Button';
 import { Card } from '@/components/ui/Card';
 import { Input } from '@/components/ui/Input';
@@ -31,7 +32,7 @@ export const LoginPage: React.FC = () => {
       success('Welcome back', 'Signed in successfully.');
       navigate('/dashboard');
     } catch (err: any) {
-      error('Sign-in Failed', err.message || 'Please verify your email and password.');
+      error('Sign-in Failed', formatAuthError(err));
     } finally {
       setLoading(false);
     }

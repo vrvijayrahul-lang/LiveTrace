@@ -6,6 +6,7 @@ import { Radio, Mail, Lock, User, ArrowRight, ShieldCheck } from 'lucide-react';
 import { useAuth } from '@/hooks/useAuth';
 import { useToast } from '@/hooks/useToast';
 import { signupSchema, type SignupFormData } from '@/lib/validation';
+import { formatAuthError } from '@/lib/utils';
 import { Button } from '@/components/ui/Button';
 import { Card } from '@/components/ui/Card';
 import { Input } from '@/components/ui/Input';
@@ -31,7 +32,7 @@ export const SignupPage: React.FC = () => {
       success('Account Created', 'Welcome to LocateFlow!');
       navigate('/dashboard');
     } catch (err: any) {
-      error('Registration Failed', err.message || 'Please check your information and try again.');
+      error('Registration Failed', formatAuthError(err));
     } finally {
       setLoading(false);
     }
