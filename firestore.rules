@@ -34,9 +34,8 @@ service cloud.firestore {
 
     // 2. Tracking Sessions
     match /trackingSessions/{sessionId} {
-      // Owner can read and manage their own sessions, recipient can query by tokenHash
-      allow read: if isOwner(resource.data.ownerUid)
-                  || (resource.data.tokenHash != null);
+      // Session metadata is readable (contains title, owner name, status, expiry - NO coordinates)
+      allow read: if true;
 
       // Owner can create session with valid initial state and 24h cap
       allow create: if isAuthenticated()

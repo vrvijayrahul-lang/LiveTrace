@@ -165,6 +165,25 @@ export const sessionService = {
             consentStatus: data.consentStatus,
             isExpired,
           };
+        } else {
+          // Direct fallback if token is actually sessionId
+          const directDoc = await getDoc(doc(db, 'trackingSessions', rawToken));
+          if (directDoc.exists()) {
+            const data = directDoc.data() as TrackingSession;
+            const isExpired = Date.now() > data.expiresAt;
+            const effectiveStatus = isExpired && data.status !== 'revoked' ? 'expired' : data.status;
+
+            return {
+              id: data.id,
+              title: data.title,
+              description: data.description,
+              ownerDisplayName: data.ownerDisplayName,
+              status: effectiveStatus,
+              expiresAt: data.expiresAt,
+              consentStatus: data.consentStatus,
+              isExpired,
+            };
+          }
         }
       } catch (err) {
         console.warn('Firestore token query error, checking local store:', err);
