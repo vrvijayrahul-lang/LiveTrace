@@ -11,7 +11,7 @@ import {
   deleteDoc,
   onSnapshot,
 } from 'firebase/firestore';
-import { db, isFirebaseConfigured } from '@/lib/firebase';
+import { db, auth, isFirebaseConfigured } from '@/lib/firebase';
 import { demoStore } from '@/services/demoStore';
 import { generateSecureToken, hashToken } from '@/lib/crypto';
 import type {
@@ -51,8 +51,12 @@ export const sessionService = {
       lastUpdatedAt: null,
     };
 
-    if (isFirebaseConfigured && db) {
-      await setDoc(doc(db, 'trackingSessions', sessionId), session);
+    const isRealFirebaseUser = Boolean(
+      isFirebaseConfigured && db && auth?.currentUser && !ownerUid.startsWith('demo-')
+    );
+
+    if (isRealFirebaseUser) {
+      await setDoc(doc(db!, 'trackingSessions', sessionId), session);
     } else {
       demoStore.saveSession(session);
     }
@@ -71,9 +75,13 @@ export const sessionService = {
    * Get all sessions owned by the authenticated user
    */
   async getUserSessions(ownerUid: string): Promise<TrackingSession[]> {
-    if (isFirebaseConfigured && db) {
+    const isRealFirebaseUser = Boolean(
+      isFirebaseConfigured && db && auth?.currentUser && !ownerUid.startsWith('demo-')
+    );
+
+    if (isRealFirebaseUser) {
       const q = query(
-        collection(db, 'trackingSessions'),
+        collection(db!, 'trackingSessions'),
         where('ownerUid', '==', ownerUid),
         orderBy('createdAt', 'desc')
       );
@@ -95,19 +103,25 @@ export const sessionService = {
    * Subscribe to real-time updates for a single session
    */
   subscribeToSession(sessionId: string, callback: (session: TrackingSession | null) => void): () => void {
-    if (isFirebaseConfigured && db) {
+    if (isFirebaseConfigured && db && !sessionId.startsWith('trk_demo')) {
       const docRef = doc(db, 'trackingSessions', sessionId);
-      return onSnapshot(docRef, (docSnap) => {
-        if (!docSnap.exists()) {
-          callback(null);
-          return;
+      return onSnapshot(
+        docRef,
+        (docSnap) => {
+          if (!docSnap.exists()) {
+            callback(demoStore.getSessionById(sessionId));
+            return;
+          }
+          const data = docSnap.data() as TrackingSession;
+          if (data.status !== 'revoked' && data.status !== 'stopped' && Date.now() > data.expiresAt) {
+            data.status = 'expired';
+          }
+          callback(data);
+        },
+        () => {
+          callback(demoStore.getSessionById(sessionId));
         }
-        const data = docSnap.data() as TrackingSession;
-        if (data.status !== 'revoked' && data.status !== 'stopped' && Date.now() > data.expiresAt) {
-          data.status = 'expired';
-        }
-        callback(data);
-      });
+      );
     }
 
     // Demo store subscription
@@ -122,26 +136,30 @@ export const sessionService = {
    */
   async getPublicSessionByToken(rawToken: string): Promise<PublicSessionInfo | null> {
     if (isFirebaseConfigured && db) {
-      const tokenHash = await hashToken(rawToken);
-      const q = query(collection(db, 'trackingSessions'), where('tokenHash', '==', tokenHash));
-      const snapshot = await getDocs(q);
-      if (snapshot.empty) return null;
+      try {
+        const tokenHash = await hashToken(rawToken);
+        const q = query(collection(db, 'trackingSessions'), where('tokenHash', '==', tokenHash));
+        const snapshot = await getDocs(q);
+        if (!snapshot.empty) {
+          const docSnap = snapshot.docs[0];
+          const data = docSnap.data() as TrackingSession;
+          const isExpired = Date.now() > data.expiresAt;
+          const effectiveStatus = isExpired && data.status !== 'revoked' ? 'expired' : data.status;
 
-      const docSnap = snapshot.docs[0];
-      const data = docSnap.data() as TrackingSession;
-      const isExpired = Date.now() > data.expiresAt;
-      const effectiveStatus = isExpired && data.status !== 'revoked' ? 'expired' : data.status;
-
-      return {
-        id: data.id,
-        title: data.title,
-        description: data.description,
-        ownerDisplayName: data.ownerDisplayName,
-        status: effectiveStatus,
-        expiresAt: data.expiresAt,
-        consentStatus: data.consentStatus,
-        isExpired,
-      };
+          return {
+            id: data.id,
+            title: data.title,
+            description: data.description,
+            ownerDisplayName: data.ownerDisplayName,
+            status: effectiveStatus,
+            expiresAt: data.expiresAt,
+            consentStatus: data.consentStatus,
+            isExpired,
+          };
+        }
+      } catch (err) {
+        console.warn('Firestore token query error, checking local store:', err);
+      }
     }
 
     return demoStore.getSessionByToken(rawToken);
@@ -152,26 +170,30 @@ export const sessionService = {
    */
   async recordConsent(rawToken: string, consent: 'granted' | 'declined'): Promise<boolean> {
     if (isFirebaseConfigured && db) {
-      const tokenHash = await hashToken(rawToken);
-      const q = query(collection(db, 'trackingSessions'), where('tokenHash', '==', tokenHash));
-      const snapshot = await getDocs(q);
-      if (snapshot.empty) return false;
+      try {
+        const tokenHash = await hashToken(rawToken);
+        const q = query(collection(db, 'trackingSessions'), where('tokenHash', '==', tokenHash));
+        const snapshot = await getDocs(q);
+        if (!snapshot.empty) {
+          const docSnap = snapshot.docs[0];
+          const session = docSnap.data() as TrackingSession;
 
-      const docSnap = snapshot.docs[0];
-      const session = docSnap.data() as TrackingSession;
+          // Validate expiration
+          if (Date.now() > session.expiresAt || session.status === 'revoked') {
+            return false;
+          }
 
-      // Validate expiration
-      if (Date.now() > session.expiresAt || session.status === 'revoked') {
-        return false;
+          await updateDoc(docSnap.ref, {
+            consentStatus: consent,
+            status: consent === 'granted' ? 'active' : 'stopped',
+            sharingStartedAt: consent === 'granted' ? Date.now() : null,
+            sharingStoppedAt: consent === 'declined' ? Date.now() : null,
+          });
+          return true;
+        }
+      } catch (err) {
+        console.warn('Firestore consent update error, checking local store:', err);
       }
-
-      await updateDoc(docSnap.ref, {
-        consentStatus: consent,
-        status: consent === 'granted' ? 'active' : 'stopped',
-        sharingStartedAt: consent === 'granted' ? Date.now() : null,
-        sharingStoppedAt: consent === 'declined' ? Date.now() : null,
-      });
-      return true;
     }
 
     return demoStore.recordConsent(rawToken, consent);
@@ -182,17 +204,21 @@ export const sessionService = {
    */
   async stopSharingByRecipient(rawToken: string): Promise<boolean> {
     if (isFirebaseConfigured && db) {
-      const tokenHash = await hashToken(rawToken);
-      const q = query(collection(db, 'trackingSessions'), where('tokenHash', '==', tokenHash));
-      const snapshot = await getDocs(q);
-      if (snapshot.empty) return false;
-
-      const docSnap = snapshot.docs[0];
-      await updateDoc(docSnap.ref, {
-        status: 'stopped',
-        sharingStoppedAt: Date.now(),
-      });
-      return true;
+      try {
+        const tokenHash = await hashToken(rawToken);
+        const q = query(collection(db, 'trackingSessions'), where('tokenHash', '==', tokenHash));
+        const snapshot = await getDocs(q);
+        if (!snapshot.empty) {
+          const docSnap = snapshot.docs[0];
+          await updateDoc(docSnap.ref, {
+            status: 'stopped',
+            sharingStoppedAt: Date.now(),
+          });
+          return true;
+        }
+      } catch (err) {
+        console.warn('Firestore stop error, falling back to local store:', err);
+      }
     }
 
     return demoStore.stopSharingByRecipient(rawToken);
@@ -202,40 +228,46 @@ export const sessionService = {
    * Owner revokes the tracking session immediately
    */
   async revokeSession(sessionId: string, ownerUid: string): Promise<boolean> {
-    if (isFirebaseConfigured && db) {
-      const docRef = doc(db, 'trackingSessions', sessionId);
-      const snap = await getDoc(docRef);
-      if (!snap.exists() || snap.data()?.ownerUid !== ownerUid) return false;
+    const isRealFirebaseUser = Boolean(
+      isFirebaseConfigured && db && auth?.currentUser && !ownerUid.startsWith('demo-')
+    );
 
-      await updateDoc(docRef, {
-        status: 'revoked',
-        revokedAt: Date.now(),
-        sharingStoppedAt: Date.now(),
-      });
-      return true;
+    if (isRealFirebaseUser) {
+      try {
+        const docRef = doc(db!, 'trackingSessions', sessionId);
+        const snap = await getDoc(docRef);
+        if (snap.exists() && snap.data()?.ownerUid === ownerUid) {
+          await updateDoc(docRef, {
+            status: 'revoked',
+            revokedAt: Date.now(),
+            sharingStoppedAt: Date.now(),
+          });
+          return true;
+        }
+      } catch (err) {
+        console.warn('Firestore revoke error, falling back to local store:', err);
+      }
     }
 
     return demoStore.revokeSession(sessionId, ownerUid);
   },
 
   /**
-   * Owner permanently deletes session
+   * Delete session record permanently
    */
   async deleteSession(sessionId: string, ownerUid: string): Promise<boolean> {
-    if (isFirebaseConfigured && db) {
-      const docRef = doc(db, 'trackingSessions', sessionId);
-      const snap = await getDoc(docRef);
-      if (!snap.exists() || snap.data()?.ownerUid !== ownerUid) return false;
+    const isRealFirebaseUser = Boolean(
+      isFirebaseConfigured && db && auth?.currentUser && !ownerUid.startsWith('demo-')
+    );
 
-      // Delete location subcollection doc
+    if (isRealFirebaseUser) {
       try {
-        await deleteDoc(doc(db, 'trackingSessions', sessionId, 'location', 'current'));
-      } catch (e) {
-        console.warn('Failed to delete location document:', e);
+        const docRef = doc(db!, 'trackingSessions', sessionId);
+        await deleteDoc(docRef);
+        return true;
+      } catch (err) {
+        console.warn('Firestore delete error, falling back to local store:', err);
       }
-
-      await deleteDoc(docRef);
-      return true;
     }
 
     return demoStore.deleteSession(sessionId, ownerUid);

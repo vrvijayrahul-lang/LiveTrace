@@ -34,21 +34,25 @@ export const locationService = {
     });
 
     if (isFirebaseConfigured && db) {
-      // In Firestore, write to trackingSessions/{sessionId}/location/current
-      const locationDocRef = doc(db, 'trackingSessions', sessionId, 'location', 'current');
-      const sessionDocRef = doc(db, 'trackingSessions', sessionId);
+      try {
+        // In Firestore, write to trackingSessions/{sessionId}/location/current
+        const locationDocRef = doc(db, 'trackingSessions', sessionId, 'location', 'current');
+        const sessionDocRef = doc(db, 'trackingSessions', sessionId);
 
-      await setDoc(locationDocRef, {
-        ...validated,
-        receivedAt: Date.now(),
-        serverTimestamp: serverTimestamp(),
-      });
+        await setDoc(locationDocRef, {
+          ...validated,
+          receivedAt: Date.now(),
+          serverTimestamp: serverTimestamp(),
+        });
 
-      await updateDoc(sessionDocRef, {
-        lastUpdatedAt: Date.now(),
-      });
+        await updateDoc(sessionDocRef, {
+          lastUpdatedAt: Date.now(),
+        });
 
-      return true;
+        return true;
+      } catch (err) {
+        console.warn('Firestore location update failed, falling back to local store:', err);
+      }
     }
 
     return demoStore.updateLocation(rawToken, validated);
@@ -61,13 +65,13 @@ export const locationService = {
     sessionId: string,
     callback: (location: LocationCoordinate | null) => void
   ): () => void {
-    if (isFirebaseConfigured && db) {
+    if (isFirebaseConfigured && db && !sessionId.startsWith('trk_demo')) {
       const locationDocRef = doc(db, 'trackingSessions', sessionId, 'location', 'current');
       return onSnapshot(
         locationDocRef,
         (docSnap) => {
           if (!docSnap.exists()) {
-            callback(null);
+            callback(demoStore.getCurrentLocation(sessionId));
             return;
           }
           const data = docSnap.data();
@@ -82,9 +86,8 @@ export const locationService = {
             receivedAt: data.receivedAt,
           });
         },
-        (error) => {
-          console.error('Error listening to location updates:', error);
-          callback(null);
+        () => {
+          callback(demoStore.getCurrentLocation(sessionId));
         }
       );
     }
